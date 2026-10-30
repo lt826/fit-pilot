@@ -1,0 +1,9 @@
+.venv
+.idea
+.git
+web
+docs
+server.log
+*.db
+data/index_cache
+__pycache__

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# 虚拟环境
+.venv/
+
+# 密钥与环境
+.env
+
+# IDE
+.idea/
+
+# 测试与缓存
+.pytest_cache/
+.ruff_cache/
+
+# 本地数据库与索引产物
+*.sqlite3
+*.db
+data/index_cache/
+
+# 前端
+web/node_modules/
+web/dist/
+
+# 运行日志
+*.log

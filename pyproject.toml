@@ -1,0 +1,27 @@
+[project]
+name = "fitpilot"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "jieba>=0.42.1",
+    "langfuse>=5.0.4",
+    "langgraph",
+    "openai",
+    "pydantic",
+    "pydantic-settings",
+    "python-dotenv",
+    "qdrant-client",
+    "rank-bm25",
+    "uvicorn[standard]",
+    "zhipu",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[dependency-groups]
+dev = [
+    "openpyxl>=3.1.5",
+]
