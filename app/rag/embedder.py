@@ -7,7 +7,9 @@ from app.core.llm import get_llm_client
 
 # 每批文本数：兼顾吞吐与单请求 token 上限；语料千级以内 16 比较稳
 BATCH_SIZE = 16
-MAX_RETRIES = 3
+# 重试次数给足：评测/并发场景下 embedding-3 免费档限流较紧，
+# 3 次不够会触发检索层"降级到BM25"，污染混合检索结果（实测教训）
+MAX_RETRIES = 5
 
 
 def embed_texts(texts: list[str], batch_size: int = BATCH_SIZE) -> list[list[float]]:

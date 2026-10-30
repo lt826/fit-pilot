@@ -30,10 +30,21 @@ def chat_stream(messages: list[dict], temperature: float = 0.3,
     def _call() -> str:
         client = get_llm_client()
         model = get_settings().chat_model
+
+        def create(**kwargs):
+            # 瞬时故障重试：批量评测/高峰期的 500 与限流靠重试吸收，
+            # 不重试则一次网络抖动就可能炸掉整个批任务
+            import time
+            for attempt in range(1, 4):
+                try:
+                    return client.chat.completions.create(**kwargs)
+                except Exception:  # noqa: BLE001
+                    if attempt == 3:
+                        raise
+                    time.sleep(2 ** attempt)
+
         if on_delta is None:
-            resp = client.chat.completions.create(
-                model=model, messages=messages, temperature=temperature
-            )
+            resp = create(model=model, messages=messages, temperature=temperature)
             usage = getattr(resp, "usage", None)
             note_generation_usage(
                 model, getattr(usage, "prompt_tokens", None),
@@ -45,14 +56,11 @@ def chat_stream(messages: list[dict], temperature: float = 0.3,
         usage = None
         # include_usage 让最后一个 chunk 携带用量；个别兼容端点不支持则降级重试
         try:
-            stream = client.chat.completions.create(
-                model=model, messages=messages, temperature=temperature,
-                stream=True, stream_options={"include_usage": True},
-            )
+            stream = create(model=model, messages=messages, temperature=temperature,
+                            stream=True, stream_options={"include_usage": True})
         except Exception:  # noqa: BLE001 —— 端点不支持 stream_options
-            stream = client.chat.completions.create(
-                model=model, messages=messages, temperature=temperature, stream=True
-            )
+            stream = create(model=model, messages=messages, temperature=temperature,
+                            stream=True)
         for chunk in stream:
             if getattr(chunk, "usage", None):
                 usage = chunk.usage

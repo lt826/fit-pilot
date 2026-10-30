@@ -3,18 +3,24 @@
 与第2步评测的差异：
 - 检索对比扩为三路：vector / bm25 / hybrid
 - task/mixed 题纳入：走完整 FitnessCoach 链路，在临时数据库副本上执行
-  （写入类操作不污染真实训练数据）
 - 裁判换 judge_model（glm-4.7，失败降级回 chat_model），消除同源偏差
 - 出处命中支持多可接受文档列 acceptable_docs（e014 口径修正）
+
+工程韧性（首轮全量评测被一次 API 网络错误整体炸掉后补齐）：
+- 逐题断点落盘 data/eval/_checkpoint.jsonl，崩溃/中断后重跑自动续传
+- 单题异常记录后继续，不中断全局；全部完成后才写正式产物并清除断点
 
 输出：控制台汇总 + docs/eval-report.md + data/eval/last_run.json（逐题明细）
 """
 
 import csv
 import json
+import os
 import shutil
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -23,7 +29,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.core.config import get_settings  # noqa: E402
 from app.core.llm import get_llm_client  # noqa: E402
 from app.rag.pipeline import RAGPipeline  # noqa: E402
-from app.rag.retriever import HybridRetriever  # noqa: E402
 
 import app.db.database as db_mod  # noqa: E402
 
@@ -31,6 +36,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EVAL_CSV = PROJECT_ROOT / "data" / "eval" / "eval_set.csv"
 REPORT_MD = PROJECT_ROOT / "docs" / "eval-report.md"
 DETAIL_JSON = PROJECT_ROOT / "data" / "eval" / "last_run.json"
+CHECKPOINT = PROJECT_ROOT / "data" / "eval" / "_checkpoint.jsonl"
 
 COL_ID = "id(编号)"
 COL_Q = "question(问题)"
@@ -53,7 +59,11 @@ def load_eval() -> list[dict]:
 
 
 def judge(question: str, reference: str, answer: str) -> bool:
-    """强模型二元判定，judge_model 失败自动降级回生成模型。"""
+    """强模型二元判定，带重试与降级（judge_model → chat_model）。
+
+    思考型裁判（glm-4.7）关思考：判卷只需二元结论，思考 9 秒纯属浪费；
+    关掉后 ~4s。extra_body 不被支持时自动去掉重试。
+    """
     prompt = f"""你是评测员。判断【模型回答】是否正确覆盖了【参考答案】的关键事实要点。
 只输出"是"或"否"两个字。允许表述和顺序差异，但出现事实错误或关键要点缺失判"否"。
 
@@ -62,69 +72,122 @@ def judge(question: str, reference: str, answer: str) -> bool:
 【模型回答】{answer}"""
     client = get_llm_client()
     for model in (get_settings().judge_model, get_settings().chat_model):
-        try:
-            resp = client.chat.completions.create(
-                model=model, temperature=0,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return (resp.choices[0].message.content or "").strip().startswith("是")
-        except Exception:  # noqa: BLE001 —— 裁判模型不可用则降级
-            continue
+        for extra in ({"thinking": {"type": "disabled"}}, None):
+            try:
+                kwargs = dict(model=model, temperature=0,
+                              messages=[{"role": "user", "content": prompt}])
+                if extra:
+                    kwargs["extra_body"] = extra
+                resp = client.chat.completions.create(**kwargs)
+                return (resp.choices[0].message.content or "").strip().startswith("是")
+            except Exception:  # noqa: BLE001 —— 参数不支持则去掉重试，失败则降级模型
+                continue
     return False
 
 
+class Checkpointer:
+    """逐题落盘断点：崩溃后重跑按 (id, mode) 跳过已完成的题。"""
+
+    def __init__(self) -> None:
+        self.details: list[dict] = []
+        self.done: set[tuple] = set()
+        if CHECKPOINT.exists():
+            with CHECKPOINT.open(encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    d = json.loads(line)
+                    self.details.append(d)
+                    self.done.add((d["id"], d["mode"]))
+            print(f"断点续跑：已有 {len(self.done)} 条结果")
+        self._fh = CHECKPOINT.open("a", encoding="utf-8")
+        self._lock = threading.Lock()  # 并发评测下多线程同时落盘
+
+    def add(self, detail: dict) -> None:
+        with self._lock:
+            self.details.append(detail)
+            self.done.add((detail["id"], detail["mode"]))
+            self._fh.write(json.dumps(detail, ensure_ascii=False) + "\n")
+            self._fh.flush()
+
+    def close(self) -> None:
+        self._fh.close()
+
+    def clear(self) -> None:
+        self._fh.close()
+        CHECKPOINT.unlink(missing_ok=True)
+
+
 def run_retrieval_mode(mode: str, rows: list[dict], pipe: RAGPipeline,
-                       details: list) -> dict:
-    n_k = n_r = hit1 = hit5 = 0
-    reject_refused = false_refusal = 0
-    judged_total = judged_ok = 0
+                       ck: Checkpointer, workers: int | None = None) -> dict:
+    """检索类题目并发执行：裁判与生成都偏 IO，多线程提吞吐。
 
-    for i, row in enumerate(rows, 1):
+    检索组件线程安全：Qdrant 客户端与 BM25 只读、jieba 分词无状态。
+    并发度经 EVAL_WORKERS 环境变量调整：默认 4；跑 hybrid 时建议 2——
+    embedding 免费档限流紧，并发过高会触发"降级到BM25"污染该组结果（实测教训）。
+    """
+    if workers is None:
+        workers = int(os.environ.get("EVAL_WORKERS", "4"))
+    todo = [r for r in rows if (r[COL_ID], mode) not in ck.done]
+    done_before = len(rows) - len(todo)
+    if done_before:
+        print(f"  [{mode}] 断点续跑跳过 {done_before} 题")
+
+    def work(row: dict) -> dict:
         q, typ = row[COL_Q], row[COL_TYPE]
-        results = pipe.retriever.retrieve(q, k=5, mode=mode)
-        doc_paths = [r.chunk.doc_path for r in results]
-        # 多可接受出处：任一命中即算（无该列则退回单出处）
-        accept = [d for d in (row.get(COL_ACC) or row[COL_SRC]).split(";") if d]
+        try:
+            results = pipe.retriever.retrieve(q, k=5, mode=mode)
+            doc_paths = [r.chunk.doc_path for r in results]
+            accept = [d for d in (row.get(COL_ACC) or row[COL_SRC]).split(";") if d]
 
-        r_hit1 = r_hit5 = None
-        if typ == "knowledge":
-            r_hit1 = doc_paths[0] in accept if doc_paths else False
-            r_hit5 = bool(set(accept) & set(doc_paths))
+            r_hit1 = r_hit5 = None
+            if typ == "knowledge":
+                r_hit1 = doc_paths[0] in accept if doc_paths else False
+                r_hit5 = bool(set(accept) & set(doc_paths))
 
-        ans = pipe.answer(q, k=5, mode=mode, results=results)
+            ans = pipe.answer(q, k=5, mode=mode, results=results)
 
-        judged = None
-        if typ == "knowledge":
-            n_k += 1
-            hit1 += bool(r_hit1)
-            hit5 += bool(r_hit5)
-            if ans.refused:
-                false_refusal += 1
-            else:
+            judged = None
+            if typ == "knowledge" and not ans.refused:
                 judged = judge(q, row[COL_REF], ans.answer)
-                judged_total += 1
-                judged_ok += judged
-        else:
-            n_r += 1
-            reject_refused += ans.refused
 
-        details.append({"id": row[COL_ID], "mode": mode, "type": typ, "question": q,
-                        "hit@1": r_hit1, "hit@5": r_hit5, "refused": ans.refused,
-                        "gated": ans.gated, "judged_correct": judged,
-                        "system_answer": ans.answer[:200],
-                        "expected_docs": accept, "retrieved_docs": doc_paths})
-        if i % 25 == 0:
-            print(f"  [{mode}] {i}/{len(rows)} ...")
+            return {"id": row[COL_ID], "mode": mode, "type": typ, "question": q,
+                    "hit@1": r_hit1, "hit@5": r_hit5, "refused": ans.refused,
+                    "gated": ans.gated, "judged_correct": judged,
+                    "system_answer": ans.answer[:200],
+                    "expected_docs": accept, "retrieved_docs": doc_paths}
+        except Exception as exc:  # noqa: BLE001 —— 单题失败记录后继续
+            return {"id": row[COL_ID], "mode": mode, "type": typ, "question": q,
+                    "hit@1": None, "hit@5": None, "refused": None,
+                    "error": f"{exc.__class__.__name__}: {exc}"}
 
-    return {"mode": mode, "knowledge_n": n_k, "reject_n": n_r,
-            "hit@1": hit1 / n_k, "hit@5": hit5 / n_k,
-            "reject_refusal": reject_refused / n_r,
-            "false_refusal": false_refusal / n_k,
-            "answer_acc": judged_ok / judged_total if judged_total else None}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = [ex.submit(work, r) for r in todo]
+        for n, fut in enumerate(as_completed(futures), 1):
+            ck.add(fut.result())
+            if n % 25 == 0:
+                print(f"  [{mode}] {done_before + n}/{len(rows)} ...")
+
+    # 指标从明细推导（而非运行时计数），断点续跑后依然正确
+    rows_m = [d for d in ck.details if d["mode"] == mode and "error" not in d]
+    k_rows = [d for d in rows_m if d["type"] == "knowledge"]
+    r_rows = [d for d in rows_m if d["type"] == "reject"]
+    judged_rows = [d for d in k_rows if d.get("judged_correct") is not None]
+
+    def rate(num, den):
+        return num / den if den else None
+
+    return {"mode": mode, "knowledge_n": len(k_rows), "reject_n": len(r_rows),
+            "hit@1": rate(sum(bool(d["hit@1"]) for d in k_rows), len(k_rows)),
+            "hit@5": rate(sum(bool(d["hit@5"]) for d in k_rows), len(k_rows)),
+            "reject_refusal": rate(sum(bool(d["refused"]) for d in r_rows), len(r_rows)),
+            "false_refusal": rate(sum(bool(d["refused"]) for d in k_rows), len(k_rows)),
+            "answer_acc": rate(sum(bool(d["judged_correct"]) for d in judged_rows),
+                               len(judged_rows))}
 
 
-def run_agent_rows(rows: list[dict], details: list) -> dict:
-    """task/mixed 走完整 Agent 链路；临时库副本执行，记录类操作不污染真实数据。"""
+def run_agent_rows(rows: list[dict], ck: Checkpointer) -> dict:
     from app.agent.graph import FitnessCoach
 
     orig_db = db_mod.DB_PATH
@@ -132,26 +195,45 @@ def run_agent_rows(rows: list[dict], details: list) -> dict:
     shutil.copy(orig_db, tmp_db)
     db_mod.DB_PATH = tmp_db
     try:
-        per_type: dict[str, dict] = {}
-        for i, row in enumerate(rows, 1):
+        for row in rows:
+            if (row[COL_ID], "agent") in ck.done:
+                continue
             q, typ = row[COL_Q], row[COL_TYPE]
-            coach = FitnessCoach()  # 独立会话，避免评测题之间上下文串扰
-            r = coach.chat(q)
-            judged = judge(q, row[COL_REF], r.answer)
-            agg = per_type.setdefault(typ, {"n": 0, "ok": 0})
-            agg["n"] += 1
-            agg["ok"] += judged
-            details.append({"id": row[COL_ID], "mode": "agent", "type": typ,
-                            "question": q, "route": r.route, "hit@1": None,
-                            "refused": False, "judged_correct": judged,
-                            "tools": [t["tool"] for t in r.tool_trace],
-                            "system_answer": r.answer[:200]})
-            if i % 5 == 0:
-                print(f"  [agent] {i}/{len(rows)} ...")
+            try:
+                coach = FitnessCoach()  # 独立会话，避免评测题之间上下文串扰
+                r = coach.chat(q)
+                judged = judge(q, row[COL_REF], r.answer)
+                ck.add({"id": row[COL_ID], "mode": "agent", "type": typ,
+                        "question": q, "route": r.route, "hit@1": None,
+                        "refused": False, "judged_correct": judged,
+                        "tools": [t["tool"] for t in r.tool_trace],
+                        "system_answer": r.answer[:200]})
+            except Exception as exc:  # noqa: BLE001
+                ck.add({"id": row[COL_ID], "mode": "agent", "type": typ,
+                        "question": q, "refused": None,
+                        "error": f"{exc.__class__.__name__}: {exc}"})
+            done_n = sum(1 for d in ck.details if d["mode"] == "agent")
+            print(f"  [agent] {done_n}/{len(rows)} ...")
+
+        per_type: dict[str, dict] = {}
+        for d in ck.details:
+            if d["mode"] == "agent" and "error" not in d:
+                agg = per_type.setdefault(d["type"], {"n": 0, "ok": 0})
+                agg["n"] += 1
+                agg["ok"] += bool(d.get("judged_correct"))
         return per_type
     finally:
         db_mod.DB_PATH = orig_db
-        tmp_db.unlink(missing_ok=True)
+        # Windows 下 SQLite 连接要等 GC 才释放文件句柄，直接删必 PermissionError
+        # （首轮全量评测因此崩在收尾、结果全丢）。先回收连接再删，失败重试。
+        import gc
+        gc.collect()
+        for attempt in range(3):
+            try:
+                tmp_db.unlink(missing_ok=True)
+                break
+            except PermissionError:
+                time.sleep(1 + attempt)
 
 
 def fmt_pct(x) -> str:
@@ -207,13 +289,17 @@ def main() -> None:
     agent_rows = [r for r in rows if r[COL_TYPE] in ("task", "mixed")]
     print(f"评测集：检索类 {len(retrieval_rows)} + Agent类 {len(agent_rows)}")
 
-    pipe = RAGPipeline()
-    details: list[dict] = []
-    stats = [run_retrieval_mode(m, retrieval_rows, pipe, details) for m in MODES]
-    agent_stats = run_agent_rows(agent_rows, details)
+    ck = Checkpointer()
+    try:
+        pipe = RAGPipeline()
+        stats = [run_retrieval_mode(m, retrieval_rows, pipe, ck) for m in MODES]
+        agent_stats = run_agent_rows(agent_rows, ck)
+    finally:
+        ck.close()
 
-    DETAIL_JSON.write_text(json.dumps(details, ensure_ascii=False, indent=1),
+    DETAIL_JSON.write_text(json.dumps(ck.details, ensure_ascii=False, indent=1),
                            encoding="utf-8")
+    ck.clear()  # 全部完成，清除断点（下次评测从零开始）
 
     print("\n===== 汇总 =====")
     for x in stats:
