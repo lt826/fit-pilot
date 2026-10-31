@@ -3,7 +3,7 @@
 import time
 
 from app.core.config import get_settings
-from app.core.llm import get_llm_client
+from app.core.llm import get_embed_client
 
 # 每批文本数：兼顾吞吐与单请求 token 上限；语料千级以内 16 比较稳
 BATCH_SIZE = 16
@@ -14,7 +14,7 @@ MAX_RETRIES = 5
 
 def embed_texts(texts: list[str], batch_size: int = BATCH_SIZE) -> list[list[float]]:
     """按输入顺序返回每条文本的向量。"""
-    client = get_llm_client()
+    client = get_embed_client()
     model = get_settings().embedding_model
     vectors: list[list[float]] = []
     for i in range(0, len(texts), batch_size):

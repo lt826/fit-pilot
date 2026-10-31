@@ -14,7 +14,7 @@ import json
 import sys
 import time
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -31,21 +31,35 @@ def fetch_all(days: int) -> list[dict]:
     auth = base64.b64encode(
         f"{s.langfuse_public_key}:{s.langfuse_secret_key}".encode()
     ).decode()
-    since = datetime.utcnow() - timedelta(days=days)
-    until = datetime.utcnow() + timedelta(minutes=5)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    until = datetime.now(timezone.utc) + timedelta(minutes=5)
     fmt = lambda d: d.strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
-    out, page = [], 1
-    while True:
-        url = (f"{API}?fromStartTime={fmt(since)}&toStartTime={fmt(until)}"
-               f"&page={page}&limit=100")
+    # v2 接口用 cursor 分页（meta.cursor 指向下一页，None 表示到底）
+    out, cursor, guard = [], None, 0
+    while guard < 50:
+        guard += 1
+        url = (f"{API}?fromStartTime={fmt(since)}&toStartTime={fmt(until)}&limit=100"
+               + (f"&cursor={cursor}" if cursor else ""))
         req = urllib.request.Request(url, headers={"Authorization": "Basic " + auth})
-        data = json.load(urllib.request.urlopen(req, timeout=30))
+        # LangFuse 免费档 API 限流较紧：429 时退避重试，翻页间主动节流
+        data = None
+        for attempt in range(4):
+            try:
+                data = json.load(urllib.request.urlopen(req, timeout=30))
+                break
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt < 3:
+                    time.sleep(3 + 3 * attempt)
+                    continue
+                raise
+        time.sleep(1)
+        if data is None:
+            break
         batch = data.get("data", [])
         out.extend(batch)
-        meta = data.get("meta", {})
-        if page >= meta.get("page", 1) or not batch:
+        cursor = (data.get("meta") or {}).get("cursor")
+        if not cursor or not batch:
             break
-        page += 1
     return out
 
 
@@ -83,6 +97,7 @@ def main() -> None:
     gens = [o for o in obs if o.get("name") == "llm_chat"]
     tokens_in = sum(tokens(o)[0] for o in gens)
     tokens_out = sum(tokens(o)[1] for o in gens)
+    token_note = "" if (tokens_in or tokens_out) else "\n（注：v2 列表接口不回传 usage 字段，token 成本请在 LangFuse 控制台 Dashboard 查看）"
 
     stages = {}
     for name in ("classify_intent", "hybrid_retrieve", "rag_answer", "tool:"):
@@ -107,6 +122,7 @@ def main() -> None:
         "",
         f"- 输入 {tokens_in} tok / 输出 {tokens_out} tok"
         + (f" / 每轮平均 {(tokens_in + tokens_out) / max(n_turn, 1):.0f} tok" if n_turn else ""),
+        token_note,
         "",
         "## 各环节平均耗时",
         "",

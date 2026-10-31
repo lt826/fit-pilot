@@ -16,6 +16,18 @@ def get_llm_client() -> OpenAI:
     return OpenAI(api_key=s.zhipu_api_key, base_url=s.zhipu_base_url)
 
 
+@lru_cache
+def get_embed_client() -> OpenAI:
+    """Embedding 专用客户端：与对话通道解耦——
+    两者供应商/配额/故障域都不同（实测智谱 embedding 被账号级限流时 chat 正常），
+    共用一个客户端会把单点故障放大到全链路。"""
+    s = get_settings()
+    return OpenAI(
+        api_key=s.embedding_api_key or s.zhipu_api_key,
+        base_url=s.embedding_base_url,
+    )
+
+
 def chat_stream(messages: list[dict], temperature: float = 0.3,
                 on_delta=None) -> str:
     """对话统一入口：on_delta 提供时走流式并逐段回调，否则普通调用。
