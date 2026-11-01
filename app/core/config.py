@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     zhipu_api_key: str = ""
     zhipu_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
     chat_model: str = "glm-4-flash"  # 开发期用免费模型，正式评测换 glm-4 系列
+    # 生成通道整体可切换（任意 OpenAI 兼容端点）：默认回落智谱主通道。
+    # 微调对比实验用它把生成切到自托管 vLLM；裁判（judge_model）仍走智谱，
+    # 被测与裁判分通道，端点互不串扰
+    chat_api_key: str = ""   # 留空回落 zhipu_api_key
+    chat_base_url: str = ""  # 留空回落 zhipu_base_url
     # 评测裁判模型：比生成模型更强，消除"自己判自己"的同源偏差；
     # 不可用时降级回 chat_model
     judge_model: str = "glm-4.7"

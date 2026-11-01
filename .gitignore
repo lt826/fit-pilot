@@ -26,3 +26,9 @@ web/dist/
 
 # 运行日志
 *.log
+
+# LoRA adapter 超出 git 单文件限制(115MB>100MB),经 Release/网盘分发
+models/
+
+# 语料生成中间态(可由脚本重新生成)
+data/sft/_sft_checkpoint.jsonl

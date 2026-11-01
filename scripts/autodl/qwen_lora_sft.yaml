@@ -1,0 +1,36 @@
+### FitPilot 同基座三组对比实验的 LoRA 训练配置
+### 基座：Qwen2.5-3B-Instruct；数据：fitpilot_sft（知识库语料蒸馏 ~800 条）
+### 显卡：RTX 4080 SUPER 32GB；bf16（Ada 架构原生支持）
+model_name_or_path: /root/autodl-tmp/models/Qwen2.5-3B-Instruct
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+
+dataset: fitpilot_sft
+dataset_dir: /root/autodl-tmp/data
+template: qwen
+cutoff_len: 1024
+overwrite_cache: true
+preprocessing_num_workers: 8
+
+output_dir: /root/autodl-tmp/saves/qwen2.5-3b-lora
+overwrite_output_dir: true
+
+# ~800条×3epoch / (4×4 有效批16) ≈ 150 steps，4080S 上约 10~15 分钟
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 4
+learning_rate: 5.0e-5
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+
+logging_steps: 10
+save_steps: 100
+save_total_limit: 2
+plot_loss: true
+report_to: none

@@ -1,0 +1,9 @@
+{
+  "fitpilot_sft": {
+    "file_name": "fitpilot_sft.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations"
+    }
+  }
+}

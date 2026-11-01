@@ -12,8 +12,13 @@ from app.core.config import get_settings
 
 @lru_cache
 def get_llm_client() -> OpenAI:
+    """对话通道：默认智谱开放平台，CHAT_BASE_URL/CHAT_API_KEY 可整体切换到
+    任意 OpenAI 兼容端点（如自托管 vLLM）——模型是可插拔组件的关键一环。"""
     s = get_settings()
-    return OpenAI(api_key=s.zhipu_api_key, base_url=s.zhipu_base_url)
+    return OpenAI(
+        api_key=s.chat_api_key or s.zhipu_api_key,
+        base_url=s.chat_base_url or s.zhipu_base_url,
+    )
 
 
 @lru_cache
