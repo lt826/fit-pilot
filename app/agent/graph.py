@@ -126,10 +126,12 @@ def _node_mixed(state: CoachState) -> CoachState:
     session: Session = state["session"]
     query = state["query"]
 
-    # ① 只取数据：明确禁止工具 Agent 给建议，避免两段回答互相矛盾
+    # ① 只取数据/信息：明确禁止工具 Agent 给建议，避免两段回答互相矛盾。
+    # 可用信息源有两类：用户个人数据（训练/体征），或联网搜索（仅健身相关时效性问题）
     data_result = ToolAgent().run(
-        f"请只调用工具查询回答下面问题所需的用户训练/身体数据，"
-        f"并用两三句话汇总数据本身，不要给任何建议或评价：\n{query}",
+        f"请只调用工具获取回答下面问题所需的信息——用户训练/身体数据用查询工具，"
+        f"时效性问题（最新/今年/最近）用联网搜索。"
+        f"汇总获取到的信息本身，不要给任何建议或评价：\n{query}",
         history=session.context_history(),
         on_event=lambda e: _emit(state, e["type"], e),
     )
@@ -144,7 +146,9 @@ def _node_mixed(state: CoachState) -> CoachState:
     system = (
         "你是健身私教助手 FitPilot。请基于【用户画像】【用户数据】【知识资料】"
         "回答问题：结论优先、简洁分点、保留关键数字；引用资料观点时注明来自知识库；"
-        "若用户数据显示情况与知识资料不符，如实说明；两处都缺信息时坦白告知，不要编造。"
+        "【用户数据】里若含联网搜索结果，必须向用户说明该部分来自网络检索并附来源链接，"
+        "与知识库信息区分开；若用户数据显示情况与知识资料不符，如实说明；"
+        "两处都缺信息时坦白告知，不要编造。"
         f"\n用户画像：{state['profile_note'] or '暂无'}"
     )
     user = (f"【用户数据】{data_result.answer}\n\n"

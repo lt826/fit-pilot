@@ -180,6 +180,90 @@ def query_nutrition(food_name: str) -> str:
     return json.dumps(items, ensure_ascii=False)
 
 
+# ---------------- 联网搜索（分级知识源的兜底层） ----------------
+
+# 搜索源选型是实测出来的：SearXNG 的主流引擎（google/ddg/brave）在国内全部超时；
+# cn.bing 对无 Cookie 的程序化请求返回劣化结果池（热榜/百科，与查询无关）；
+# 百度 302 反爬。搜狗是唯一对普通 HTTP 请求返回干净可解析结果页的源。
+_SOGOU_BLOCK_RE = re.compile(r'<div class="vrwrap"|<div class="rb"')
+_SOGOU_TITLE_RE = re.compile(
+    r'<h3 class="vr-title[^"]*"[^>]*>.*?<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.S)
+_SCRIPT_STYLE_RE = re.compile(r"<script.*?</script>|<style.*?</style>", re.S)
+_COMMENT_RE = re.compile(r"<!--.*?-->")
+_TAG_RE = re.compile(r"<[^>]+>")
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+
+def _clean_text(fragment: str) -> str:
+    """HTML 片段 → 纯文本：去脚本/注释/标签，还原实体，折叠空白。"""
+    import html as _html
+    txt = _COMMENT_RE.sub("", _SCRIPT_STYLE_RE.sub("", fragment))
+    return re.sub(r"\s+", " ", _TAG_RE.sub("", _html.unescape(txt))).strip()
+
+
+def _resolve_sogou_link(href: str) -> str:
+    """搜狗部分结果是 /link?url= 跳转链，HEAD 跟随一次拿真实地址；失败则原样返回。"""
+    import httpx
+
+    url = "https://www.sogou.com" + href if href.startswith("/") else href
+    if "/link?" not in url:
+        return url
+    try:
+        resp = httpx.head(url, timeout=3, follow_redirects=True,
+                          headers={"User-Agent": _UA})
+        return str(resp.url)
+    except Exception:  # noqa: BLE001 —— 解析失败时跳转链本身也能用
+        return url
+
+
+def search_web(query: str, max_results: int = 5) -> str:
+    """联网搜索（搜狗结果页）：返回标题/链接/摘要，由模型组织成带来源的回答。
+
+    设计约束：本地知识库是第一优先级，本工具只兜底健身相关的时效性问题；
+    结果里显式携带 notice 提醒模型向用户标注"信息来自网络"。
+    网络故障返回可读错误（与其他工具的容错约定一致），不抛异常。
+    """
+    import httpx
+
+    try:
+        resp = httpx.get(
+            "https://www.sogou.com/web",
+            params={"query": query},
+            timeout=10.0,
+            headers={"User-Agent": _UA, "Accept-Language": "zh-CN,zh;q=0.9"},
+            follow_redirects=True,
+        )
+        resp.raise_for_status()
+    except Exception as e:  # noqa: BLE001 —— 网络故障转模型可读信息
+        return f"[搜索服务不可用] {e.__class__.__name__}: {e}；请告知用户暂时无法联网，并基于已有知识回答"
+
+    items = []
+    for block in _SOGOU_BLOCK_RE.split(resp.text):
+        m = _SOGOU_TITLE_RE.search(block)
+        if not m:
+            continue
+        title = _clean_text(m.group(2))
+        if not title:
+            continue
+        # 摘要 = 容器全文去掉标题后的开头部分（摘要节点 class 不稳定，整容器更皮实）
+        body = _clean_text(block)
+        snippet = body.split(title, 1)[-1][:200] if title in body else body[:200]
+        items.append({"title": title,
+                      "url": _resolve_sogou_link(m.group(1)),
+                      "snippet": snippet})
+        if len(items) >= max_results:
+            break
+    if not items:
+        return json.dumps(
+            {"status": "not_found", "message": f"联网未搜到与「{query}」相关的结果"},
+            ensure_ascii=False)
+    return json.dumps({
+        "notice": "以下结果来自互联网检索而非本地知识库，回答时必须向用户说明并附来源链接",
+        "results": items,
+    }, ensure_ascii=False)
+
+
 # ---------------- 工具声明（OpenAI function calling 格式）----------------
 
 TOOLS_SPEC = [
@@ -260,6 +344,24 @@ TOOLS_SPEC = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": "联网搜索最新资讯。仅当满足两个条件才调用：①问题与健身/营养/训练相关，"
+                           "②明显依赖时效性信息（如'最新''今年''最近流行'）且本地知识库无法覆盖。"
+                           "普通健身知识问题禁止调用（应走知识问答）；与健身无关的问题也不调用（直接说明无法帮助）。"
+                           "回答时必须向用户说明信息来自网络检索并附来源链接。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "搜索关键词，加上年份等时效词效果更好"},
+                    "max_results": {"type": "integer", "description": "返回条数，默认 5"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 EXECUTORS = {
@@ -268,6 +370,7 @@ EXECUTORS = {
     "log_body_metric": log_body_metric,
     "query_body_metrics": query_body_metrics,
     "query_nutrition": query_nutrition,
+    "search_web": search_web,
 }
 
 
