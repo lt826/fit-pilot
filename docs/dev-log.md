@@ -52,7 +52,9 @@
 
 ## 第3步 · Agent 工具层
 
-（待开始）
+**✅ 2026-10-29 完成。** 产出：`app/db/database.py`（SQLite 三表：训练记录/体征/画像）+ `app/agent/tools.py`（5 工具：记/查训练、记/查体征、营养查询；动作名→部位关键词推断；份量换算在工具层算好）+ `app/agent/loop.py`（手写 function calling 循环，5 轮熔断，工具错误转模型可读字符串促其自纠）+ `scripts/agent_demo.py`。4 场景验收全过。v2 迭代新增第 6 个工具 `search_web`（联网搜索，见 v2 章节）。
+
+<!-- 本步无代码/算法/逻辑层面的踩坑记录（两个工具实现级 badcase——份量估算口径、复合菜品营养基准——已当场修复，按收录标准不记） -->
 
 ---
 
@@ -130,7 +132,9 @@
 
 ## 第8步 · GitHub 发布 + 简历转化
 
-（待开始）
+**✅ 2026-11-02 完成。** Gitee（liutao826/fit-pilot）与 GitHub（lt826/fit-pilot）双仓公开同步；README 精修（核心指标表 / mermaid 架构图 / 评测与微调专区 / roadmap / 里程碑）；MIT License；LoRA adapter（115MB，超 git 单文件限制）经 Release v1.0 分发；发布前全历史 API key 四格式扫描零泄漏。
+
+<!-- 本步无代码/算法/逻辑层面的踩坑记录（GitHub 间歇阻断、SSH config 钥匙指向不一致等均为环境配置问题，不收录） -->
 
 ---
 
