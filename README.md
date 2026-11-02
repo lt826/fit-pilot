@@ -93,6 +93,23 @@ docker compose up -d qdrant              # 启动向量库
 cd web && npm install && npm run dev               # 前端 :5174
 ```
 
+### 接入 MCP 客户端（Claude Desktop / Cursor 等）
+
+工具层已按 MCP 标准协议暴露（`app/mcp_server.py`，stdio 传输），任何 MCP 客户端可直接操作本项目的训练库/营养库/联网搜索。在客户端配置（如 Claude Desktop 的 `claude_desktop_config.json`）中添加：
+
+```json
+{
+  "mcpServers": {
+    "fitpilot": {
+      "command": "<项目根>/.venv/Scripts/python.exe",
+      "args": ["<项目根>/app/mcp_server.py"]
+    }
+  }
+}
+```
+
+验证：`python scripts/test_mcp_server.py`（stdio 握手 → 列工具 → 只读调用全链路）。
+
 ### 复现微调实验
 
 训练与服务配置在 `scripts/autodl/`（LLaMA-Factory yaml + vLLM 双模型脚本），语料生成 `scripts/gen_sft_data.py`，三组对比评测 `scripts/eval_finetune.py`（支持断点续跑 / 原位重判 / 分通道裁判）。单卡 24GB+ 显存即可复现。
@@ -101,7 +118,7 @@ cd web && npm install && npm run dev               # 前端 :5174
 
 **后端** Python 3.12 · FastAPI · SSE · LangGraph · pydantic-settings · uv
 **RAG** Qdrant · BAAI/bge-m3（硅基流动） · rank-bm25 + jieba · RRF 融合
-**Agent** 手写 function calling 循环 · 5 工具 · LangGraph StateGraph 四路意图路由
+**Agent** 手写 function calling 循环 · 6 工具（FC/MCP 双协议暴露） · LangGraph StateGraph 四路意图路由
 **记忆** 短期压缩摘要 + 长期画像（触发词/量纲正则 → LLM 抽取 → SQLite）
 **微调** LLaMA-Factory · Qwen2.5-3B-Instruct · vLLM（LoRA 热挂载）
 **前端** Vue3 · Vite · Element Plus · SSE 流式渲染
@@ -117,6 +134,7 @@ app/
 ├── agent/      # LangGraph路由 · 工具循环(熔断) · 5个工具
 ├── memory/     # 短期压缩 + 长期画像抽取
 └── api/        # FastAPI · SSE事件协议 · 会话历史
+app/mcp_server.py  # MCP 服务：6 工具经标准协议(stdio)暴露给任意 MCP 客户端
 data/
 ├── corpus/     # 知识库语料 31篇/183章
 ├── sft/        # 微调语料 791条
@@ -136,7 +154,7 @@ docs/           # 评测报告×3 · 微调对比 · badcase · 开发日志 · 
 ## Roadmap
 
 - [x] 联网搜索工具（分级知识源：本地知识库优先，联网只兜底时效性健身问题，回答标注来源层级）
-- [ ] MCP 工具接入（现有 6 工具暴露为 MCP server）
+- [x] MCP 工具接入（6 工具暴露为 MCP server，Claude Desktop/Cursor 可直接操作，`app/mcp_server.py`）
 - [ ] 检索重排（cross-encoder rerank）与查询改写
 - [ ] 评测集扩充与多裁判一致性校验
 
