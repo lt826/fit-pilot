@@ -156,6 +156,13 @@ def run_group(group: str, workers: int) -> None:
 
     pipe = None
     if group in ("lora_rag", "base_rag"):
+        # 组件健康预检：RAG 组的实验条件包含"向量检索可用"——静默降级到 BM25 会
+        # 让闸门失效、改变实验条件，814 题白跑的实测教训（降级对生产是韧性、对评测是污染）
+        from app.rag.retriever import HybridRetriever
+        probe = HybridRetriever().retrieve("__健康探测__", k=1, mode="hybrid")
+        if not probe or probe[0].vector_score is None:
+            sys.exit("[中止] 向量检索当前处于降级状态(Qdrant/embedding 异常)，"
+                     "RAG 组不满足实验条件——请先恢复组件后重跑")
         from app.rag.pipeline import RAGPipeline
         pipe = RAGPipeline()
 
