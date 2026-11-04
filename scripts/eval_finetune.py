@@ -17,6 +17,7 @@ C组 lora_rag ：FitPilot RAG 管线 + LoRA 生成（检索增强）
   python scripts/eval_finetune.py --group lora
   CHAT_BASE_URL=http://127.0.0.1:18800/v1 CHAT_API_KEY=local \\
   CHAT_MODEL=fitpilot-lora python scripts/eval_finetune.py --group lora_rag
+  CHAT_BASE_URL=... CHAT_MODEL=qwen-base python scripts/eval_finetune.py --group base_rag
   python scripts/eval_finetune.py --report
 """
 
@@ -44,7 +45,7 @@ COL_REF = "reference_answer(参考答案)"
 COL_TYPE = "type(题型)"
 
 GROUPS = {"base": "Qwen2.5-3B 基座直接答", "lora": "LoRA 微调后直接答",
-          "lora_rag": "LoRA + RAG 检索增强"}
+          "base_rag": "Qwen2.5-3B 基座 + RAG", "lora_rag": "LoRA + RAG 检索增强"}
 
 # A/B 组人设：与 RAG 生成器同源的教练口吻 + 同款结构化拒答标记，
 # 保证三组"会不会拒答"的口径一致，A/B 不因提示词劣势被冤枉
@@ -154,7 +155,7 @@ def run_group(group: str, workers: int) -> None:
     model = {"base": "qwen-base", "lora": "fitpilot-lora"}.get(group)
 
     pipe = None
-    if group == "lora_rag":
+    if group in ("lora_rag", "base_rag"):
         from app.rag.pipeline import RAGPipeline
         pipe = RAGPipeline()
 
@@ -165,7 +166,7 @@ def run_group(group: str, workers: int) -> None:
         q, typ = row[COL_Q], row[COL_TYPE]
         base_detail = {"id": row[COL_ID], "group": group, "type": typ, "question": q}
         try:
-            if group == "lora_rag":
+            if group in ("lora_rag", "base_rag"):
                 ans = pipe.answer(q, k=5, mode="hybrid")
                 answer, refused = ans.answer, ans.refused
             else:
