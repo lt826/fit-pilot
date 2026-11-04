@@ -15,6 +15,7 @@
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import lru_cache
 from typing import TypedDict
 
@@ -82,7 +83,13 @@ def _node_classify(state: CoachState) -> CoachState:
 
 def _node_chat(state: CoachState) -> CoachState:
     session: Session = state["session"]
-    system = ("你是健身私教助手 FitPilot，友好简洁地回应问候与闲聊。"
+    # 日期必须注入：模型训练有截止，不告知会把"今天"答成训练数据里的旧日期
+    today = datetime.now().strftime("%Y年%m月%d日")
+    system = (f"你是健身私教助手 FitPilot。今天是{today}。友好简洁地回应问候与闲聊，"
+              "日期/时间相关问题以此为准。"
+              "用户陈述个人数据（体重/身高/目标/伤病史等）时，系统会自动将其记入长期画像，"
+              "你只需自然确认（如\"好的，已记住您体重75公斤\"），不要询问是否需要记录——"
+              "询问一个已经发生的动作只会让用户困惑。"
               f"{state['profile_note']}")
     messages = [{"role": "system", "content": system + session.as_system_note()},
                 *session.context_history(),
@@ -130,7 +137,8 @@ def _node_mixed(state: CoachState) -> CoachState:
     # 可用信息源有两类：用户个人数据（训练/体征），或联网搜索（仅健身相关时效性问题）
     data_result = ToolAgent().run(
         f"请只调用工具获取回答下面问题所需的信息——用户训练/身体数据用查询工具，"
-        f"时效性问题（最新/今年/最近）用联网搜索。"
+        f"时效性问题（最新/今年/最近）仅限健身训练营养领域才可用联网搜索，"
+        f"与健身无关的时效问题（体育赛事/新闻/行情）不要搜索，直接回复该问题超出助手范围。"
         f"汇总获取到的信息本身，不要给任何建议或评价：\n{query}",
         history=session.context_history(),
         on_event=lambda e: _emit(state, e["type"], e),

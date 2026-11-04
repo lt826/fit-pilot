@@ -110,12 +110,25 @@ def query_body_metrics(days: int = 90) -> str:
             "SELECT log_date, weight_kg, waist_cm FROM body_metrics"
             " WHERE log_date >= ? AND user_id=1 ORDER BY log_date DESC", (since,)
         ).fetchall()]
+    note = ""
+    if not rows and int(days) < 90:
+        # 参数自愈：模型常把"现在体重"误传 days=1，窄窗口查空时自动放宽到90天，
+        # 免得让用户以为历史数据丢了（工具描述里劝过模型，实测劝不住）
+        with get_conn() as conn:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT log_date, weight_kg, waist_cm FROM body_metrics"
+                " WHERE log_date >= date('now','-90 day') AND user_id=1"
+                " ORDER BY log_date DESC"
+            ).fetchall()]
+        note = f"窗口{days}天内无记录，已自动放宽到90天"
     trend = ""
     if len(rows) >= 2:
         delta = rows[-1]["weight_kg"] - rows[0]["weight_kg"]  # 旧→新
         trend = f"区间变化 {delta:+.1f}kg"
-    return json.dumps({"window": f"最近{days}天", "trend": trend, "records": rows},
-                      ensure_ascii=False)
+    payload = {"window": f"最近{days}天", "trend": trend, "records": rows}
+    if note:
+        payload["note"] = note
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @lru_cache
@@ -281,7 +294,7 @@ TOOLS_SPEC = [
                     "weight_kg": {"type": "number", "description": "单次重量（公斤），自重动作填 0"},
                     "date": {"type": "string", "description": "日期 YYYY-MM-DD，'今天'不用传，默认今天"},
                     "body_part": {"type": "string",
-                                  "description": "部位：胸/背/腿/肩/手臂/核心/全身。不传则自动推断"},
+                                "description": "部位：胸/背/腿/肩/手臂/核心/全身。不传则自动推断"},
                 },
                 "required": ["exercise", "sets", "reps"],
             },
@@ -292,7 +305,7 @@ TOOLS_SPEC = [
         "function": {
             "name": "query_training",
             "description": "查询用户近 N 天的训练记录与按部位汇总（次数、总容量）。"
-                           "用户问'这周/这个月练了几次腿''最近练了什么'时调用。",
+                        "用户问'这周/这个月练了几次腿''最近练了什么'时调用。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -322,7 +335,9 @@ TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "query_body_metrics",
-            "description": "查询近 N 天体重记录及变化趋势。",
+            "description": "查询体重记录及变化趋势。用户问'我现在/最近体重'指的是最新一条记录，"
+                           "days 保持默认 90 即可覆盖——注意：不要因为问题里有'今天/现在'就把 days "
+                           "传成 1，窗口太窄会查不到已有的历史记录。",
             "parameters": {
                 "type": "object",
                 "properties": {"days": {"type": "integer", "description": "回溯天数，默认 90"}},

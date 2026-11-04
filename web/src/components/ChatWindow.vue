@@ -143,10 +143,14 @@ onMounted(scrollToBottom)
   height: 100%;
   display: flex;
   flex-direction: column;
+  /* 电流画布向四周溢出 64px：顶部溢出是刻意的光晕叠层（在 .chat 内部，不受影响），
+     但底部/左右溢出会撑大页面滚动区，产生多余的页面级滚动条——这里整体裁掉 */
+  overflow: hidden;
 }
 .list {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px 24px;
 }
 /* 外层留出电流 glow 的呼吸空间（画布上下溢出 64px） */

@@ -5,8 +5,8 @@
 这也是面试时讲清 Agent 执行机制的基础。
 
 循环机制：
-  LLM → tool_calls? → 执行工具（结果/错误以 role=tool 回填）→ LLM → ...
-  → 无 tool_calls 即最终回答；超过 MAX_TOOL_ROUNDS 轮强制无工具收尾
+LLM → tool_calls? → 执行工具（结果/错误以 role=tool 回填）→ LLM → ...
+→ 无 tool_calls 即最终回答；超过 MAX_TOOL_ROUNDS 轮强制无工具收尾
 """
 
 from dataclasses import dataclass, field
@@ -27,7 +27,10 @@ SYSTEM_PROMPT = """你是健身私教助手 FitPilot。今天是 {today}。
 3. 工具返回 [参数错误]/[工具执行出错] 时，修正参数后重试，最多重试 2 次
 4. 工具查询无结果时如实告知，不要虚构记录
 5. 最终回答用中文，自然口语化，保留关键数字的准确性
-6. 与训练记录和营养无关的健身知识问题，正常凭专业知识回答（第4步会接入知识库检索）"""
+6. 与训练记录和营养无关的健身知识问题，正常凭专业知识回答（第4步会接入知识库检索）
+7. 用户只是陈述个人数据（"我体重150斤""我练了两年"）时，系统会自动更新长期画像，
+   自然确认即可，不要调用记录工具、也不要询问是否需要记录；只有用户明确要求
+   "记录/查询"训练或体征时才调用工具"""
 
 
 @dataclass
@@ -52,7 +55,7 @@ class ToolAgent:
         client = get_llm_client()
         messages = [
             {"role": "system",
-             "content": SYSTEM_PROMPT.format(today=datetime.now().strftime("%Y-%m-%d"))},
+            "content": SYSTEM_PROMPT.format(today=datetime.now().strftime("%Y-%m-%d"))},
             *(history or []),
             {"role": "user", "content": query},
         ]
@@ -73,20 +76,20 @@ class ToolAgent:
                 "content": msg.content or "",
                 "tool_calls": [
                     {"id": tc.id, "type": "function",
-                     "function": {"name": tc.function.name,
-                                  "arguments": tc.function.arguments}}
+                    "function": {"name": tc.function.name,
+                                "arguments": tc.function.arguments}}
                     for tc in msg.tool_calls
                 ],
             })
             for tc in msg.tool_calls:
                 result = execute_tool(tc.function.name, tc.function.arguments)
                 entry = {"tool": tc.function.name,
-                         "args": tc.function.arguments, "result": result}
+                        "args": tc.function.arguments, "result": result}
                 trace.append(entry)
                 if on_event:
                     # result 截断：过程展示用，全量内容 trace 里有
                     on_event({"type": "tool_call", "tool": entry["tool"],
-                              "args": entry["args"], "result": result[:200]})
+                            "args": entry["args"], "result": result[:200]})
                 # 工具结果以 role=tool 回填，错误信息同样走这条路 → 模型可自纠
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
