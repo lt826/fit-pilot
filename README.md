@@ -2,7 +2,7 @@
 
 > RAG + 多工具 Agent 的智能健身私教系统 —— 会说"我不知道"、记得住你、能查会算、过程透明
 
-FitPilot 不是"套壳问答机"：它有**可溯源的知识问答**（混合检索 + 双防线拒答）、**能动手的工具层**（手写 function calling，记录训练/查营养/追踪体征）、**认识用户的长期画像**（"我 180 斤"自动换算入库、"降到 120 斤"覆盖更新）、以及**一套完整的评测体系**（248 题 + 同基座 LoRA 三组对比实验）。
+FitPilot 不是"套壳问答机"：它有**可溯源的知识问答**（混合检索 + 双防线拒答）、**能动手的工具层**（手写 function calling，记录训练/查营养/追踪体征）、**认识用户的长期画像**（"我 180 斤"自动换算入库、"降到 120 斤"覆盖更新）、以及**一套完整的评测体系**（434 题 + 同基座 LoRA 2×2 全因子四组对比实验）。
 
 ## 核心指标
 
@@ -11,7 +11,7 @@ FitPilot 不是"套壳问答机"：它有**可溯源的知识问答**（混合�
 | 混合检索 Hit@1（248 题评测集） | **hybrid 83.6%** > vector 82.1% > bm25 78.1% |
 | 拒答召回（知识库外问题敢说不知道） | **100%**（双防线：检索闸门 + 生成层标记） |
 | Agent 混合题（一句话里工具+知识） | **15/15 满分**，任务题 10/12 |
-| LoRA 三组对比（Qwen2.5-3B 同基座） | **LoRA+RAG 96.9%** > 基座 87.9% > LoRA 66.2% |
+| LoRA 2×2 四组对比（Qwen2.5-3B 同基座，407 题） | 基座+RAG **96.4%** ≈ LoRA+RAG 95.5% > 基座 86.0% > LoRA 69.2%；拒答 100%/100%/75%/20% |
 
 > 完整数据与解读见 [docs/eval-report.md](docs/eval-report.md)（检索对比）与 [docs/ft-compare-report.md](docs/ft-compare-report.md)（微调实验）。
 
@@ -60,9 +60,9 @@ flowchart TB
 
 - **评测集 248 题**：knowledge 201 + reject 20（考幻觉抑制）+ task 12 + mixed 15；双语表头 CSV，含多可接受出处口径
 - **工程韧性**：断点续跑（逐题落盘）、单题异常隔离、并发可配（embedding 限流预算）、强裁判模型关思考
-- **LoRA 三组对比实验**（详见 [docs/ft-compare-report.md](docs/ft-compare-report.md)）：
+- **LoRA 2×2 全因子实验**（详见 [docs/ft-compare-report.md](docs/ft-compare-report.md)）：
   - SFT 语料 791 条由知识库蒸馏（6 种问法变体），LoRA rank16 仅训 **0.96% 参数**，RTX 4080 SUPER 上 **3.6 分钟**完成训练
-  - vLLM 单进程双模型名（基座 / LoRA）保证三组推理参数完全一致
+  - vLLM 单进程双模型名（基座 / LoRA）保证四组推理参数完全一致
   - **结论：微调单独用反而降分且丢失拒答边界感（60%→10%），检索闸门才是机制性防线（100%）——微调塑风格，检索供事实**
 
 ![训练损失曲线](docs/training_loss.png)
@@ -112,7 +112,7 @@ cd web && npm install && npm run dev               # 前端 :5174
 
 ### 复现微调实验
 
-训练与服务配置在 `scripts/autodl/`（LLaMA-Factory yaml + vLLM 双模型脚本），语料生成 `scripts/gen_sft_data.py`，三组对比评测 `scripts/eval_finetune.py`（支持断点续跑 / 原位重判 / 分通道裁判）。单卡 24GB+ 显存即可复现。
+训练与服务配置在 `scripts/autodl/`（LLaMA-Factory yaml + vLLM 双模型脚本），语料生成 `scripts/gen_sft_data.py`，四组对比评测 `scripts/eval_finetune.py`（支持断点续跑 / 原位重判 / 分通道裁判）。单卡 24GB+ 显存即可复现。
 
 ## 技术栈
 
@@ -146,7 +146,7 @@ docs/           # 评测报告×3 · 微调对比 · badcase · 开发日志 · 
 ## 文档
 
 - [评测报告：三路检索对比](docs/eval-report.md) —— 248 题，结论随 embedding 模型变化的方法论教训
-- [微调三组对比](docs/ft-compare-report.md) —— LoRA+RAG 96.9% 的完整实验记录
+- [微调四组对比](docs/ft-compare-report.md) —— 2×2 全因子实验：微调无显著正贡献，收益全部来自检索
 - [Badcase 分析](docs/badcase-report.md) —— 误拒/漏检/生成质量分类归因
 - [开发日志](docs/dev-log.md) —— 7 条踩坑记录（评测四连败、429 静默吞错等）
 - [LangFuse 观测统计](docs/observability-stats.md)
