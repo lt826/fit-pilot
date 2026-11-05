@@ -64,3 +64,11 @@ export const getSessionMessages = (sid) =>
 
 export const deleteSession = (sid) =>
   fetch(`/api/sessions/${sid}`, { method: 'DELETE' }).then((r) => r.json())
+
+// ---- 数据管理（不可逆，仅 UI 按钮触发，不暴露给 Agent） ----
+
+export const clearTrainingLogs = () =>
+  fetch('/api/training-logs', { method: 'DELETE' }).then((r) => r.json())
+
+export const clearBodyMetrics = () =>
+  fetch('/api/body-metrics', { method: 'DELETE' }).then((r) => r.json())

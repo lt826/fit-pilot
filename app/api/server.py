@@ -227,3 +227,23 @@ def delete_session(sid: str):
         conn.execute("DELETE FROM chat_messages WHERE session_id=?", (sid,))
         conn.execute("DELETE FROM chat_sessions WHERE id=?", (sid,))
     return {"status": "ok"}
+
+
+# ---------------- 数据管理 ----------------
+# 刻意不做成 Agent 工具：对话里一句"清空吧"就真删库太危险，
+# 不可逆操作必须走 UI 按钮 + 前端二次确认（模型声称"已清空"并无中生有，实测发生过）
+
+@app.delete("/api/training-logs")
+def clear_training_logs():
+    """清空全部训练记录。"""
+    with get_conn() as conn:
+        n = conn.execute("DELETE FROM training_logs").rowcount
+    return {"status": "ok", "deleted": n}
+
+
+@app.delete("/api/body-metrics")
+def clear_body_metrics():
+    """清空全部体测记录（体重/腰围）。"""
+    with get_conn() as conn:
+        n = conn.execute("DELETE FROM body_metrics").rowcount
+    return {"status": "ok", "deleted": n}

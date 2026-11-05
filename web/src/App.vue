@@ -5,7 +5,10 @@ import AuroraBg from './components/AuroraBg.vue'
 import ChatWindow from './components/ChatWindow.vue'
 import HistoryPanel from './components/HistoryPanel.vue'
 import ProfileCard from './components/ProfileCard.vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  clearBodyMetrics,
+  clearTrainingLogs,
   createSession,
   deleteSession,
   getSessionMessages,
@@ -65,6 +68,27 @@ const quickAsks = [
 ]
 const quickAsk = (text) => chatRef.value?.send(text)
 
+// 清空数据：两步确认后才发 DELETE（不可逆操作，所以不走 Agent 工具）
+const clearData = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '将删除全部训练记录和体测记录（体重/腰围），用户画像与对话历史不受影响。',
+      '清空数据',
+      { type: 'warning', confirmButtonText: '继续', cancelButtonText: '取消' }
+    )
+    await ElMessageBox.confirm('删除不可恢复，确定执行吗？', '最后确认', {
+      type: 'error',
+      confirmButtonText: '确认清空',
+      cancelButtonText: '再想想',
+      confirmButtonClass: 'el-button--danger',
+    })
+  } catch {
+    return // 任一步取消都中止
+  }
+  const [t, m] = await Promise.all([clearTrainingLogs(), clearBodyMetrics()])
+  ElMessage.success(`已清空：训练记录 ${t.deleted} 条、体测记录 ${m.deleted} 条`)
+}
+
 onMounted(async () => {
   await refreshProfile()
   await newSession()
@@ -95,6 +119,12 @@ onMounted(async () => {
           @click="quickAsk(q.text)"
         >
           {{ q.label }}
+        </el-button>
+      </div>
+
+      <div class="danger-zone">
+        <el-button size="small" text type="danger" @click="clearData">
+          🗑 清空数据
         </el-button>
       </div>
     </el-aside>
@@ -200,6 +230,10 @@ body {
 }
 .quick-btn {
   justify-content: flex-start;
+}
+/* 清空按钮沉底：不可逆操作不与常用功能抢位置 */
+.danger-zone {
+  margin-top: auto;
 }
 .main {
   padding: 0;
