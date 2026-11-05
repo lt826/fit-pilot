@@ -55,7 +55,7 @@ const submit = async () => {
     </div>
   </el-card>
 
-  <el-dialog v-model="dialogVisible" title="编辑用户画像" width="480px" align-center class="profile-dialog">
+  <el-dialog v-model="dialogVisible" title="编辑用户画像" width="480px" align-center append-to-body class="profile-dialog">
     <el-form label-width="48px" class="pform">
       <div class="grid2">
         <el-form-item label="身高">
