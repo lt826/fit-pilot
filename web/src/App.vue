@@ -5,10 +5,8 @@ import AuroraBg from './components/AuroraBg.vue'
 import ChatWindow from './components/ChatWindow.vue'
 import HistoryPanel from './components/HistoryPanel.vue'
 import ProfileCard from './components/ProfileCard.vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import DataManager from './components/DataManager.vue'
 import {
-  clearBodyMetrics,
-  clearTrainingLogs,
   createSession,
   deleteSession,
   getSessionMessages,
@@ -19,6 +17,7 @@ const profile = ref(null)
 const chatRef = ref(null)
 const sessions = ref([])
 const activeId = ref('')
+const dataMgrOpen = ref(false)
 
 const refreshProfile = async () => {
   profile.value = await (await fetch('/api/profile')).json()
@@ -68,27 +67,6 @@ const quickAsks = [
 ]
 const quickAsk = (text) => chatRef.value?.send(text)
 
-// 清空数据：两步确认后才发 DELETE（不可逆操作，所以不走 Agent 工具）
-const clearData = async () => {
-  try {
-    await ElMessageBox.confirm(
-      '将删除全部训练记录和体测记录（体重/腰围），用户画像与对话历史不受影响。',
-      '清空数据',
-      { type: 'warning', confirmButtonText: '继续', cancelButtonText: '取消' }
-    )
-    await ElMessageBox.confirm('删除不可恢复，确定执行吗？', '最后确认', {
-      type: 'error',
-      confirmButtonText: '确认清空',
-      cancelButtonText: '再想想',
-      confirmButtonClass: 'el-button--danger',
-    })
-  } catch {
-    return // 任一步取消都中止
-  }
-  const [t, m] = await Promise.all([clearTrainingLogs(), clearBodyMetrics()])
-  ElMessage.success(`已清空：训练记录 ${t.deleted} 条、体测记录 ${m.deleted} 条`)
-}
-
 onMounted(async () => {
   await refreshProfile()
   await newSession()
@@ -123,10 +101,12 @@ onMounted(async () => {
       </div>
 
       <div class="danger-zone">
-        <el-button size="small" text type="danger" @click="clearData">
-          🗑 清空数据
+        <el-button size="small" text type="danger" @click="dataMgrOpen = true">
+          🗑 删除数据
         </el-button>
       </div>
+
+      <DataManager v-model="dataMgrOpen" />
     </el-aside>
 
     <el-main class="main">

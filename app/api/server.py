@@ -231,11 +231,50 @@ def delete_session(sid: str):
 
 # ---------------- 数据管理 ----------------
 # 刻意不做成 Agent 工具：对话里一句"清空吧"就真删库太危险，
-# 不可逆操作必须走 UI 按钮 + 前端二次确认（模型声称"已清空"并无中生有，实测发生过）
+# 不可逆操作必须走 UI（实测模型会虚构"已清空"的执行结果）。
+# 粒度分层：单条删（本处）/ 全清（清空接口，仅兜底）——前端主力是勾选删除面板
+
+@app.get("/api/training-logs")
+def list_training_logs():
+    """训练记录列表（删除面板用），新日期在前。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM training_logs ORDER BY log_date DESC, id DESC LIMIT 500"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.delete("/api/training-logs/{lid}")
+def delete_training_log(lid: int):
+    with get_conn() as conn:
+        n = conn.execute("DELETE FROM training_logs WHERE id=?", (lid,)).rowcount
+    if not n:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    return {"status": "ok"}
+
+
+@app.get("/api/body-metrics")
+def list_body_metrics():
+    """体测记录列表（删除面板用）。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM body_metrics ORDER BY log_date DESC, id DESC LIMIT 500"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.delete("/api/body-metrics/{mid}")
+def delete_body_metric(mid: int):
+    with get_conn() as conn:
+        n = conn.execute("DELETE FROM body_metrics WHERE id=?", (mid,)).rowcount
+    if not n:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    return {"status": "ok"}
+
 
 @app.delete("/api/training-logs")
 def clear_training_logs():
-    """清空全部训练记录。"""
+    """清空全部训练记录（兜底接口，UI 主力是单条勾选删除）。"""
     with get_conn() as conn:
         n = conn.execute("DELETE FROM training_logs").rowcount
     return {"status": "ok", "deleted": n}
@@ -243,7 +282,7 @@ def clear_training_logs():
 
 @app.delete("/api/body-metrics")
 def clear_body_metrics():
-    """清空全部体测记录（体重/腰围）。"""
+    """清空全部体测记录（兜底接口）。"""
     with get_conn() as conn:
         n = conn.execute("DELETE FROM body_metrics").rowcount
     return {"status": "ok", "deleted": n}
