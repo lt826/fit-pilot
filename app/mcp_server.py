@@ -26,7 +26,7 @@ mcp = MCPServer("fitpilot-tools")
 
 @mcp.tool()
 def log_training(exercise: str, sets: int, reps: int, weight_kg: float = 0,
-                 date: str | None = None, body_part: str | None = None) -> str:
+                date: str | None = None, body_part: str | None = None) -> str:
     """记录一条训练日志。用户提到完成了某个动作（含重量/组数/次数）时调用。
 
     Args:

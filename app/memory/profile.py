@@ -12,7 +12,7 @@ from app.db.database import get_conn, now_str
 
 # 出现这些词才触发画像抽取（绝大多数消息不含个人信息，没必要每轮都调 LLM）
 TRIGGER_WORDS = ("目标", "增肌", "减脂", "保持", "身高", "体重", "腰", "伤", "膝",
-                 "几年", "新手", "老手", "每周", "初级", "中级", "高级", "想瘦", "想壮")
+                "几年", "新手", "老手", "每周", "初级", "中级", "高级", "想瘦", "想壮")
 
 # 量纲触发：口语里"我120斤""长到90公斤""身高1米8"不带"体重"等关键词，
 # 纯关键词会漏抽——数字+单位同样触发（实测"我降到了120斤"曾因此漏更新）
@@ -41,8 +41,8 @@ def _extract(user_text: str) -> dict:
     for model, extra in models:
         try:
             kwargs = dict(model=model, temperature=0,
-                          messages=[{"role": "user",
-                                     "content": f"{_EXTRACT_PROMPT}\n\n用户陈述：{user_text}"}])
+                        messages=[{"role": "user",
+                                    "content": f"{_EXTRACT_PROMPT}\n\n用户陈述：{user_text}"}])
             if extra:
                 kwargs["extra_body"] = extra
             resp = client.chat.completions.create(**kwargs)
