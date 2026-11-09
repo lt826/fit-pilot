@@ -42,10 +42,11 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="FitPilot API", version="0.1.0", lifespan=lifespan)
 
-# 开发期直连(5173)与 Vite 代理并存；生产由 Nginx/静态托管同源，无需 CORS
+# 开发期直连(5173/5174)与 Vite 代理并存；生产由同源静态托管，无需 CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173",
+                   "http://localhost:5174", "http://127.0.0.1:5174"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -286,3 +287,19 @@ def clear_body_metrics():
     with get_conn() as conn:
         n = conn.execute("DELETE FROM body_metrics").rowcount
     return {"status": "ok", "deleted": n}
+
+
+# ---------------- 生产模式：同源托管前端构建产物 ----------------
+# 开发期前后端分端口（5174/8000，Vite 代理转发 /api）；生产把 web/dist 挂到根路径，
+# 一个 uvicorn 进程同时服务页面和 API，同源部署天然无 CORS 问题。
+# 必须放在所有路由定义之后：挂载在 "/" 的 StaticFiles 会吞掉后续未匹配的路径。
+from pathlib import Path  # noqa: E402
+
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
+if _DIST.is_dir():
+    app.mount("/", StaticFiles(directory=_DIST, html=True), name="frontend")
+else:
+    # dist 不存在不报错：纯 API 模式照常跑（开发/评测脚本场景）
+    print("[提示] 未找到 web/dist，当前为纯 API 模式（前端请用 npm run dev）")
