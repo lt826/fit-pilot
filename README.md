@@ -15,6 +15,10 @@ FitPilot 不是"套壳问答机"：它有**可溯源的知识问答**（混合�
 
 > 完整数据与解读见 [docs/eval-report.md](docs/eval-report.md)（检索对比）与 [docs/ft-compare-report.md](docs/ft-compare-report.md)（微调实验）。
 
+## 演示视频
+
+🎬 [**4 分钟完整演示**](https://github.com/lt826/fit-pilot/releases/download/v1.1/FitPilot-demo.mp4)（公网真实环境录制）：知识问答带出处 → 工具记录训练 → 混合场景三步编排 → 域外拒答 → 长期画像自动更新 → 数据管理安全边界 → 2×2 实验结论。
+
 ## 架构
 
 ```mermaid
