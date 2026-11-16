@@ -1,6 +1,7 @@
 <script setup>
 // 顶层布局：左侧画像+快捷演示，中间对话流，右侧历史会话；Aurora 极光背景铺底
 import { onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import AuroraBg from './components/AuroraBg.vue'
 import ChatWindow from './components/ChatWindow.vue'
 import HistoryPanel from './components/HistoryPanel.vue'
@@ -9,8 +10,11 @@ import DataManager from './components/DataManager.vue'
 import {
   createSession,
   deleteSession,
+  getProfile,
   getSessionMessages,
+  getToken,
   listSessions,
+  login,
 } from './api'
 
 const profile = ref(null)
@@ -19,8 +23,32 @@ const sessions = ref([])
 const activeId = ref('')
 const dataMgrOpen = ref(false)
 
+// ---- 登录态 ----
+const loggedIn = ref(!!getToken())
+const password = ref('')
+const logging = ref(false)
+const doLogin = async () => {
+  if (!password.value) return
+  logging.value = true
+  try {
+    await login(password.value)
+    loggedIn.value = true
+    password.value = ''
+    ElMessage.success('登录成功')
+    onMountedInit()
+  } catch (e) {
+    ElMessage.error(e.message || '登录失败')
+  } finally {
+    logging.value = false
+  }
+}
+// token 过期/失效：任何接口 401 时弹回登录层
+window.addEventListener('fitpilot:unauthorized', () => {
+  loggedIn.value = false
+})
+
 const refreshProfile = async () => {
-  profile.value = await (await fetch('/api/profile')).json()
+  profile.value = await getProfile()
 }
 const refreshSessions = async () => {
   sessions.value = await listSessions()
@@ -67,15 +95,26 @@ const quickAsks = [
 ]
 const quickAsk = (text) => chatRef.value?.send(text)
 
-onMounted(async () => {
+const onMountedInit = async () => {
   await refreshProfile()
   await newSession()
+}
+
+onMounted(async () => {
+  if (!loggedIn.value) return
+  // 用真实接口验 token 是否仍有效
+  try {
+    await getProfile()
+  } catch {
+    return
+  }
+  await onMountedInit()
 })
 </script>
 
 <template>
-  <AuroraBg />
-  <el-container class="layout">
+  <AuroraBg v-if="loggedIn" />
+  <el-container v-if="loggedIn" class="layout">
     <el-aside width="280px" class="aside glass">
       <div class="brand">
         <span class="logo">💪</span>
@@ -128,6 +167,26 @@ onMounted(async () => {
       />
     </el-aside>
   </el-container>
+
+<!-- 登录层：口令换 JWT（深空电光配色） -->
+<div v-else class="login-mask">
+  <div class="login-card">
+    <div class="login-logo">💪</div>
+    <div class="login-title">FitPilot</div>
+    <div class="login-sub">RAG + Agent 健身私教</div>
+    <el-input
+      v-model="password"
+      type="password"
+      placeholder="访问口令"
+      size="large"
+      show-password
+      @keydown.enter="doLogin"
+    />
+    <el-button type="primary" size="large" class="login-btn" :loading="logging" @click="doLogin">
+      进 入
+    </el-button>
+  </div>
+</div>
 </template>
 
 <style>
@@ -217,5 +276,46 @@ body {
 }
 .main {
   padding: 0;
+}
+</style>
+
+<style scoped>
+.login-mask {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at 50% 30%, #16233f 0%, #0d1420 65%);
+}
+.login-card {
+  width: 330px;
+  background: rgba(18, 26, 43, 0.92);
+  border: 1px solid var(--el-border-color);
+  border-radius: 14px;
+  padding: 34px 30px 30px;
+  text-align: center;
+  box-shadow: 0 0 40px rgba(34, 211, 238, 0.15);
+}
+.login-logo {
+  font-size: 40px;
+  filter: drop-shadow(0 0 12px rgba(34, 211, 238, 0.6));
+}
+.login-title {
+  font-size: 22px;
+  font-weight: 700;
+  margin-top: 8px;
+  background: linear-gradient(90deg, #7df9ff, #22d3ee, #8b5cf6);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.login-sub {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin: 4px 0 22px;
+}
+.login-btn {
+  width: 100%;
+  margin-top: 14px;
 }
 </style>

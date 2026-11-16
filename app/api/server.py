@@ -20,13 +20,15 @@ import threading
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.agent.graph import FitnessCoach
+from app.core.config import get_settings
 from app.core.observability import finish_turn, shutdown_client, turn_trace
+from app.core.security import create_token, limiter, verify_token
 from app.db.database import get_conn, init_db, now_str
 
 # 服务启动即建表：不能依赖某条链路（如工具层）顺带初始化，
@@ -114,10 +116,26 @@ class ChatIn(BaseModel):
     session_id: str | None = None
 
 
+
+
+class LoginIn(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(body: LoginIn):
+    """口令换 JWT（与 AskData 同款组件）；登录本身限流防爆破。"""
+    limiter.limit("login", 10)
+    if body.password != get_settings().admin_password:
+        raise HTTPException(status_code=401, detail="口令错误")
+    return {"token": create_token("admin"), "expires_in": get_settings().jwt_expire_hours * 3600}
+
+
 @app.post("/api/chat/stream")
-def chat_stream(body: ChatIn):
+def chat_stream(body: ChatIn, user: str = Depends(verify_token)):
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="message 不能为空")
+    limiter.limit(f"chat:{user}", get_settings().rate_limit_per_min)
     session_id, coach = _get_coach(body.session_id)
     events: queue.Queue = queue.Queue()
 
@@ -159,14 +177,14 @@ class ProfileIn(BaseModel):
 
 
 @app.get("/api/profile")
-def get_profile():
+def get_profile(_: str = Depends(verify_token)):
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM user_profile WHERE id=1").fetchone()
     return dict(row) if row else {}
 
 
 @app.put("/api/profile")
-def update_profile(p: ProfileIn):
+def update_profile(p: ProfileIn, _: str = Depends(verify_token)):
     updates = {k: v for k, v in p.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="没有可更新字段")
@@ -182,7 +200,7 @@ def update_profile(p: ProfileIn):
 # ---------------- 会话历史 ----------------
 
 @app.post("/api/sessions")
-def create_session():
+def create_session(_: str = Depends(verify_token)):
     """显式新建会话（前端进入页面/点新建时调用）。"""
     sid = uuid.uuid4().hex[:12]
     SESSIONS[sid] = FitnessCoach()
@@ -196,7 +214,7 @@ def create_session():
 
 
 @app.get("/api/sessions")
-def list_sessions():
+def list_sessions(_: str = Depends(verify_token)):
     """历史会话列表：只列有消息的会话（避免刷新产生的空会话堆积），按最近更新排序。"""
     with get_conn() as conn:
         rows = conn.execute(
@@ -212,7 +230,7 @@ def list_sessions():
 
 
 @app.get("/api/sessions/{sid}/messages")
-def get_session_messages(sid: str):
+def get_session_messages(sid: str, _: str = Depends(verify_token)):
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT role, content, route FROM chat_messages WHERE session_id=? ORDER BY id",
@@ -222,7 +240,7 @@ def get_session_messages(sid: str):
 
 
 @app.delete("/api/sessions/{sid}")
-def delete_session(sid: str):
+def delete_session(sid: str, _: str = Depends(verify_token)):
     SESSIONS.pop(sid, None)
     with get_conn() as conn:
         conn.execute("DELETE FROM chat_messages WHERE session_id=?", (sid,))
@@ -236,7 +254,7 @@ def delete_session(sid: str):
 # 粒度分层：单条删（本处）/ 全清（清空接口，仅兜底）——前端主力是勾选删除面板
 
 @app.get("/api/training-logs")
-def list_training_logs():
+def list_training_logs(_: str = Depends(verify_token)):
     """训练记录列表（删除面板用），新日期在前。"""
     with get_conn() as conn:
         rows = conn.execute(
@@ -246,7 +264,7 @@ def list_training_logs():
 
 
 @app.delete("/api/training-logs/{lid}")
-def delete_training_log(lid: int):
+def delete_training_log(lid: int, _: str = Depends(verify_token)):
     with get_conn() as conn:
         n = conn.execute("DELETE FROM training_logs WHERE id=?", (lid,)).rowcount
     if not n:
@@ -255,7 +273,7 @@ def delete_training_log(lid: int):
 
 
 @app.get("/api/body-metrics")
-def list_body_metrics():
+def list_body_metrics(_: str = Depends(verify_token)):
     """体测记录列表（删除面板用）。"""
     with get_conn() as conn:
         rows = conn.execute(
@@ -265,7 +283,7 @@ def list_body_metrics():
 
 
 @app.delete("/api/body-metrics/{mid}")
-def delete_body_metric(mid: int):
+def delete_body_metric(mid: int, _: str = Depends(verify_token)):
     with get_conn() as conn:
         n = conn.execute("DELETE FROM body_metrics WHERE id=?", (mid,)).rowcount
     if not n:
@@ -274,7 +292,7 @@ def delete_body_metric(mid: int):
 
 
 @app.delete("/api/training-logs")
-def clear_training_logs():
+def clear_training_logs(_: str = Depends(verify_token)):
     """清空全部训练记录（兜底接口，UI 主力是单条勾选删除）。"""
     with get_conn() as conn:
         n = conn.execute("DELETE FROM training_logs").rowcount
@@ -282,7 +300,7 @@ def clear_training_logs():
 
 
 @app.delete("/api/body-metrics")
-def clear_body_metrics():
+def clear_body_metrics(_: str = Depends(verify_token)):
     """清空全部体测记录（兜底接口）。"""
     with get_conn() as conn:
         n = conn.execute("DELETE FROM body_metrics").rowcount

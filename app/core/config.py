@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     chat_api_key: str = ""   # 留空回落 zhipu_api_key
     chat_base_url: str = ""  # 留空回落 zhipu_base_url
     # 评测裁判模型：比生成模型更强，消除"自己判自己"的同源偏差；
+    # ---- 认证与限流（与 AskData 同款可复用组件） ----
+    admin_password: str = "fitpilot123"
+    jwt_secret: str = "change-me-in-.env"
+    jwt_expire_hours: int = 24
+    rate_limit_per_min: int = 20
+
     # 不可用时降级回 chat_model
     judge_model: str = "glm-4.7"
 
