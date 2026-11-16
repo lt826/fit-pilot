@@ -1,8 +1,17 @@
 <script setup>
 // 单条消息气泡：用户右侧，助手左侧（含执行过程轨迹 + 流式光标）
+// 助手回答按 Markdown 渲染（模型常用 **加粗**/列表），DOMPurify 消毒防注入
+import { computed } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import ProcessTrace from './ProcessTrace.vue'
 
-defineProps({ msg: { type: Object, required: true } })
+const props = defineProps({ msg: { type: Object, required: true } })
+
+marked.setOptions({ breaks: true }) // 模型回答常单行成句，单换行转 <br>
+
+const rendered = computed(() =>
+  DOMPurify.sanitize(marked.parse(props.msg.text || '')))
 </script>
 
 <template>
@@ -17,10 +26,11 @@ defineProps({ msg: { type: Object, required: true } })
         />
       </template>
 
-      <div class="text">
-        {{ msg.text }}<span v-if="msg.streaming && msg.text" class="cursor">▌</span>
+      <div v-if="msg.role === 'assistant'" class="text md">
+        <span v-html="rendered"></span><span v-if="msg.streaming && msg.text" class="cursor">▌</span>
         <span v-if="msg.streaming && !msg.text" class="dots">思考中…</span>
       </div>
+      <div v-else class="text">{{ msg.text }}</div>
 
       <el-alert
         v-if="msg.notice"
@@ -62,6 +72,24 @@ defineProps({ msg: { type: Object, required: true } })
 .text {
   white-space: pre-wrap;
   word-break: break-word;
+}
+/* v-html 渲染出的 markdown 元素（scoped 下要 :deep） */
+.md :deep(strong) {
+  color: #7df9ff;
+}
+.md :deep(ul), .md :deep(ol) {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.md :deep(li) {
+  margin: 2px 0;
+}
+.md :deep(h1), .md :deep(h2), .md :deep(h3) {
+  font-size: 15px;
+  margin: 8px 0 4px;
+}
+.md :deep(p) {
+  margin: 4px 0;
 }
 .cursor {
   animation: blink 0.9s infinite;
